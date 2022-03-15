@@ -1,0 +1,369 @@
+---
+title: "scGenomics"
+author: "CHENEL Hugo"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(plotly)
+library(car)
+library(ade4)
+library(GenomicRanges)
+library(ggVennDiagram)
+library(Exact)
+```
+
+
+############################################################
+# GENES _reference Liste des gènes actifs : 
+```{r}
+gene_dm6_gr = readRDS(paste0("TxDb.Dmelanogaster.Ensembl.dm6.RDS"))
+```
+
+
+############################################################
+# vecteur de variabilité (NSD): Mes-4 KD, Hypb KD et control.
+# vecteur de gain de variabilité (Delta-NSD): Mes-4 KD, Hypb KD et control.
+```{r}
+LIST_QUANTIF_RNASEQ_SC = readRDS(paste0("LIST_QUANTIF_RNASEQ_SC.RDS"))
+names(LIST_QUANTIF_RNASEQ_SC)
+```
+
+
+############################################################
+# Fuites de Contact HiC associée aux gènes à +/- 20Kb des bordures H3K4me1 
+```{r}
+Gn_LeakScores = readRDS(paste0("Gn_LeakScores.RDS"))
+Gn_LeakScores$Gene = paste0(Gn_LeakScores$Gene,".1")
+names(Gn_LeakScores)
+head(Gn_LeakScores$Gene)
+```
+
+
+
+# Correlation between long distance leaks and gene expression variability ?
+
+Scatter plot of NSD WT and leak WT on all genes
+
+```{r}
+str(Gn_LeakScores) #dataframe not list
+
+length(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl) #5882
+length(Gn_LeakScores$WT_leak_score) #13872
+
+WT_leak = Gn_LeakScores[Gn_LeakScores$Gene %in% names(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl), "WT_leak_score"] #filter by column name
+
+names(WT_leak) = Gn_LeakScores[Gn_LeakScores$Gene %in% names(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl), "Gene"]
+
+str(WT_leak)
+length(WT_leak) #5221
+
+
+WT_NSD = LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl[names(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl )%in% names(WT_leak)]
+
+str(WT_NSD) #5221
+
+#WT_leak and WT_NSD are identical in size
+
+#sorting step
+WT_NSD = WT_NSD[names(WT_leak)]
+str(WT_NSD)
+
+hist(WT_NSD)
+hist(WT_leak)
+plot(WT_NSD,WT_leak)
+barplot(WT_NSD)
+barplot(WT_leak)
+boxplot(WT_NSD,WT_leak)
+
+scatterplot(WT_NSD~WT_leak,main="Scatter plot NSD WT vs leak WT")
+#no overall correlation is expected
+
+cor(WT_NSD, WT_leak, method = c("pearson")) #0.0405
+#no correlation between gene expression variability in WT and long distance leaks for all genes
+```
+
+
+
+# Do leak contacts influence gene expression variability (NSD) ?
+
+##NSD WT : comparison between top25 leak et bottom25 leak 
+
+```{r}
+WT_top25 = LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl[Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score>quantile(Gn_LeakScores$WT_leak_score, 0.75))]]
+
+Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score>quantile(Gn_LeakScores$WT_leak_score, 0.75))]
+str(LIST_QUANTIF_RNASEQ_SC)
+unlist(WT_top25)
+length(unlist(WT_top25)) #3467
+which(!is.na(unlist(WT_top25)))
+#remove NA from the list
+#we obtain NSD scores from top25
+fwt = unlist(WT_top25)[-which(is.na(unlist(WT_top25)))]
+length(fwt) #1085 common to NSD and top25
+
+
+#verify that there is an similar number of genes for bottom 25
+WT_bottom25 = LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl[Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score<quantile(Gn_LeakScores$WT_leak_score, 0.25))]]
+Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score<quantile(Gn_LeakScores$WT_leak_score, 0.25))]
+unlist(WT_bottom25)
+length(unlist(WT_bottom25)) #3462
+which(!is.na(unlist(WT_bottom25)))
+#we obtain NSD scores from bottom25
+fwb = unlist(WT_bottom25)[-which(is.na(unlist(WT_bottom25)))]
+length(fwb) #1494 common to NSD and bottom25
+
+boxplot(WT_top25,WT_bottom25,col=c("thistle","wheat"),names=c("Top 25","Bottom 25"),ylab='NSD',main="Boxplot WT leak")
+
+wilcox.test(WT_top25,WT_bottom25)
+#null hypothesis is rejected : WT_top25 and WT_bottom25 are significantly different
+#conflicting data between boxplot and statistical test
+#gene expression variability in WT is influenced by the leaks ? Statistically significant but biologically irrelevant
+
+summary(WT_top25)
+summary(WT_bottom25)
+
+median(WT_top25, na.rm = T)-median(WT_bottom25,na.rm = T) #0.072 ~ 0
+mean(WT_top25, na.rm = T)-mean(WT_bottom25,na.rm = T) #0.063 ~ 0
+
+median(WT_bottom25, na.rm = T)/median(WT_top25,na.rm = T) #0.971 ~ 1
+mean(WT_bottom25, na.rm = T)/mean(WT_top25,na.rm = T) #0.975 ~ 1
+
+#pvalue is statistically significant despite similar boxplots
+```
+The statistical difference is probably due to the extremely high quantity of genes. Indeed, just a tiny differencein mean or median in a large quantity of data can induce a statistical difference.
+First groups of genes seem similar in spite of being statistically significantly different. So It is necessary to reduce the size of our gene groups.
+
+##NSD WT : comparison between top10 leak et bottom10 leak
+
+```{r}
+WT_top10 = LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl[Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score>quantile(Gn_LeakScores$WT_leak_score, 0.9))]]
+
+Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score>quantile(Gn_LeakScores$WT_leak_score, 0.9))]
+unlist(WT_top10)
+length(unlist(WT_top10)) #1387
+which(!is.na(unlist(WT_top10)))
+#we obtain NSD scores from top10
+ft = unlist(WT_top10)[-which(is.na(unlist(WT_top10)))]
+length(ft) #447 common to NSD and top10
+
+WT_bottom10 = LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl[Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score<quantile(Gn_LeakScores$WT_leak_score, 0.1))]]
+Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score<quantile(Gn_LeakScores$WT_leak_score, 0.1))]
+unlist(WT_bottom10)
+length(unlist(WT_bottom10)) #1381
+which(!is.na(unlist(WT_bottom10)))
+#we obtain NSD WT scores from bottom10
+fb = unlist(WT_bottom10)[-which(is.na(unlist(WT_bottom10)))]
+length(fb) #605 common to NSD and bottom10
+
+boxplot(WT_top10, main="Boxplot WT top 10")
+boxplot(WT_bottom10, main="Boxplot WT bottom 10")
+summary(WT_top10)
+summary(WT_bottom10)
+
+boxplot(WT_top10,WT_bottom10,col=c("thistle","wheat"),names=c("Top 10","Bottom 10"),ylab='NSD',main="Boxplot WT leak")
+
+wilcox.test(WT_top10,WT_bottom10, alternative = "greater")
+#p-value = 0.03719
+#null hypothesis is rejected
+#signal signal top 10
+#Visually slight difference in Q1
+```
+
+
+##NSD WT : comparison between top2 leak et bottom2 leak
+
+```{r}
+WT_top2 = LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl[Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score>quantile(Gn_LeakScores$WT_leak_score, 0.98))]]
+
+Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score>quantile(Gn_LeakScores$WT_leak_score, 0.98))]
+unlist(WT_top2)
+length(unlist(WT_top2)) #275
+which(!is.na(unlist(WT_top2)))
+ft = unlist(WT_top2)[-which(is.na(unlist(WT_top2)))]
+length(ft) #99 common to NSD and top2
+
+WT_bottom2 = LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl[Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score<quantile(Gn_LeakScores$WT_leak_score, 0.02))]]
+Gn_LeakScores$Gene[which(Gn_LeakScores$WT_leak_score<quantile(Gn_LeakScores$WT_leak_score, 0.02))]
+unlist(WT_bottom2)
+length(unlist(WT_bottom2)) #271
+which(!is.na(unlist(WT_bottom2)))
+fb = unlist(WT_bottom2)[-which(is.na(unlist(WT_bottom2)))]
+length(fb) #117 common to NSD and bottom2
+
+boxplot(WT_top2, main="Boxplot WT top 2")
+boxplot(WT_bottom2, main="Boxplot WT bottom 2")
+summary(WT_top2)
+summary(WT_bottom2)
+
+boxplot(WT_top2,WT_bottom2,col=c("thistle","wheat"),names=c("Top 2","Bottom 2"),ylab='NSD',main="Boxplot WT leak")
+
+wilcox.test(WT_top2,WT_bottom2, alternative="greater")
+#null hypothesis isn't rejected
+
+median(WT_top2, na.rm = T)-median(WT_bottom2,na.rm = T) #0.154 ~ 0
+mean(WT_top2, na.rm = T)-mean(WT_bottom2,na.rm = T) #0.126 ~ 0
+median(WT_bottom2, na.rm = T)/median(WT_top2,na.rm = T) #0.936 ~ 1
+mean(WT_bottom2, na.rm = T)/mean(WT_top2,na.rm = T) #0.951 ~ 1
+#WT_top2 et WT_bottom2 are not significantly different
+#Visually slight difference in Q1, mean and median
+```
+
+These results suggest that a signal is present for the 1000 genes (top10/bottom10) group but not for the 250 genes group (top2/bottom2).
+
+
+
+#Do genes with an increasing variability (ΔNSD) impacted by the depletion of a binding element (Beaf32/Mes4 depleted) ?
+
+##NSD Mes4 : comparison between top25 leak et bottom25 leak
+
+```{r}
+summary(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl)  #mean=2.5388
+summary(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Mes4_KD) # mean=2.0130
+cor.test(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl,LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Mes4_KD) #cor=0.996824 
+scatterplot(LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Ctrl,LIST_QUANTIF_RNASEQ_SC$NSD_RNAseq_SC_5882_Mes4_KD)
+
+Mes4_top25 = LIST_QUANTIF_RNASEQ_SC$DELTA_NSD_RNAseq_SC_5882_Mes4_KD[Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score>quantile(Gn_LeakScores$Differential_leak_score, 0.75))]]
+
+Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score>quantile(Gn_LeakScores$Differential_leak_score, 0.75))]
+str(LIST_QUANTIF_RNASEQ_SC)
+unlist(Mes4_top25)
+length(unlist(Mes4_top25)) #3461
+which(!is.na(unlist(Mes4_top25)))
+ft = unlist(Mes4_top25)[-which(is.na(unlist(Mes4_top25)))]
+length(ft) #1509 common to NSD and top25
+
+Mes4_bottom25 = LIST_QUANTIF_RNASEQ_SC$DELTA_NSD_RNAseq_SC_5882_Mes4_KD[Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score<quantile(Gn_LeakScores$Differential_leak_score, 0.25))]]
+Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score<quantile(Gn_LeakScores$Differential_leak_score, 0.25))]
+unlist(Mes4_bottom25)
+length(unlist(Mes4_bottom25)) #3468
+which(!is.na(unlist(Mes4_bottom25)))
+fb = unlist(Mes4_top25)[-which(is.na(unlist(Mes4_top25)))]
+length(fb) #1509 common to NSD and bottom25
+
+boxplot(Mes4_top25, main="Boxplot Mes4 top 25")
+boxplot(Mes4_bottom25, main="Boxplot Mes4 bottom 25")
+summary(Mes4_top25)
+summary(Mes4_bottom25)
+
+boxplot(Mes4_top25,Mes4_bottom25,col=c("tomato","cornflowerblue"),names=c("Top 25","Bottom 25"),ylab='ΔNSD',main="Boxplot Mes4 leak")
+
+wilcox.test(Mes4_top25,Mes4_bottom25)
+#null hypothesis is rejected
+
+median(Mes4_top25, na.rm = T)-median(Mes4_bottom25,na.rm = T) #0.056 ~ 0
+mean(Mes4_top25, na.rm = T)-mean(Mes4_bottom25,na.rm = T) #0.081 ~ 0
+median(Mes4_top25, na.rm = T)/median(Mes4_bottom25,na.rm = T)
+mean(Mes4_top25, na.rm = T)/mean(Mes4_bottom25,na.rm = T) 
+
+#Ratio shows difference between mean and median, but visually there is no difference
+#Contradictory data
+```
+
+First groups of genes seem similar in spite of being statistically significantly different. This conflicting data is once again due to the large amount of genes. So It is necessary to reduce the size of our gene groups.
+
+##NSD Mes4 : comparison between top10 leak et bottom10 leak
+
+```{r}
+Mes4_top10 = LIST_QUANTIF_RNASEQ_SC$DELTA_NSD_RNAseq_SC_5882_Mes4_KD[Gn_LeakScores$Gene[which(Gn_LeakScores$KD_leak_score>quantile(Gn_LeakScores$KD_leak_score, 0.9))]]
+
+names(Gn_LeakScores)
+
+Gn_LeakScores$Gene[which(Gn_LeakScores$KD_leak_score>quantile(Gn_LeakScores$KD_leak_score, 0.9))]
+unlist(Mes4_top10)
+length(unlist(Mes4_top10)) #1388
+which(!is.na(unlist(Mes4_top10)))
+ft = unlist(Mes4_top10)[-which(is.na(unlist(Mes4_top10)))]
+length(ft) #597 common to NSD and top10
+
+Mes4_bottom10 = LIST_QUANTIF_RNASEQ_SC$DELTA_NSD_RNAseq_SC_5882_Mes4_KD[Gn_LeakScores$Gene[which(Gn_LeakScores$KD_leak_score<quantile(Gn_LeakScores$KD_leak_score, 0.1))]]
+Gn_LeakScores$Gene[which(Gn_LeakScores$KD_leak_score<quantile(Gn_LeakScores$KD_leak_score, 0.1))]
+unlist(Mes4_bottom10)
+length(unlist(Mes4_bottom10)) #1388
+which(!is.na(unlist(Mes4_bottom10)))
+fb = unlist(Mes4_top10)[-which(is.na(unlist(Mes4_top10)))]
+length(fb) #597 common to NSD and bottom10
+
+boxplot(Mes4_top10, main="Boxplot Mes4 top 10")
+boxplot(Mes4_bottom10, main="Boxplot Mes4 bottom 10")
+summary(Mes4_top10)
+summary(Mes4_bottom10)
+
+boxplot(Mes4_top10,Mes4_bottom10,col=c("tomato","cornflowerblue"),names=c("Top 10","Bottom 10"),ylab='ΔNSD',main="Boxplot Mes4 leak")
+
+wilcox.test(Mes4_top10,Mes4_bottom10, alternative="less")
+#null hypothesis isn’t rejected
+
+median(Mes4_top10, na.rm = T)-median(Mes4_bottom10,na.rm = T) #-0.049 ~ 0
+mean(Mes4_top10, na.rm = T)-mean(Mes4_bottom10,na.rm = T) #0.021 ~ 0
+```
+
+
+##NSD Mes4 : comparison between top2 leak et bottom2 leak
+
+```{r}
+Mes4_top2 = LIST_QUANTIF_RNASEQ_SC$DELTA_NSD_RNAseq_SC_5882_Mes4_KD[Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score>quantile(Gn_LeakScores$Differential_leak_score, 0.98))]]
+
+Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score>quantile(Gn_LeakScores$Differential_leak_score, 0.98))]
+unlist(Mes4_top2)
+length(unlist(Mes4_top2)) #277
+which(!is.na(unlist(Mes4_top2)))
+ft = unlist(Mes4_top2)[-which(is.na(unlist(Mes4_top2)))]
+length(ft) #133 common to NSD and top2
+
+Mes4_bottom2 = LIST_QUANTIF_RNASEQ_SC$DELTA_NSD_RNAseq_SC_5882_Mes4_KD[Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score<quantile(Gn_LeakScores$Differential_leak_score, 0.02))]]
+Gn_LeakScores$Gene[which(Gn_LeakScores$Differential_leak_score<quantile(Gn_LeakScores$Differential_leak_score, 0.02))]
+unlist(Mes4_bottom2)
+length(unlist(Mes4_bottom2)) #277
+which(!is.na(unlist(Mes4_bottom2)))
+fb = unlist(Mes4_top2)[-which(is.na(unlist(Mes4_top2)))]
+length(fb) #133 common to NSD and bottom2
+
+boxplot(Mes4_top2, main="Boxplot Mes4 top 2")
+boxplot(Mes4_bottom2, main="Boxplot Mes4 bottom 2")
+summary(Mes4_top2)
+summary(Mes4_bottom2)
+
+boxplot(Mes4_top2,Mes4_bottom2,col=c("tomato","cornflowerblue"),names=c("Top 2","Bottom 2"),ylab='ΔNSD',main="Boxplot Mes4 leak")
+#Visually slight differences
+
+wilcox.test(Mes4_top2,Mes4_bottom2, alternative ="greater")
+#null hypothesis isn’t rejected
+
+median(Mes4_top2, na.rm = T)-median(Mes4_bottom2,na.rm = T) #0.167 != 0
+mean(Mes4_top2, na.rm = T)-mean(Mes4_bottom2,na.rm = T) #0.191 != 0
+median(Mes4_top2, na.rm = T)/median(Mes4_bottom2,na.rm = T) #0.736 != 1
+mean(Mes4_top2, na.rm = T)/mean(Mes4_bottom2,na.rm = T) #0.723 != 1
+
+#Low statistical power
+#Conflicting data between boxplot and statistical test
+```
+
+Leak contact doesn’t seem to influence gene expression variability in genes depleted by a boundary element.
+
+
+# Test if mutant type cells have an increasing gene expression variability
+```{r}
+#Top10 in both conditions
+boxplot(WT_top10,Mes4_top10,col=c("aquamarine4","chocolate4"),names=c("Top 10 WT","Top 10 Mes4"),ylab='NSD',main="Boxplot Leak")
+
+wilcox.test(WT_top10,Mes4_top10, alternative = "greater") #p-value < 2.2e-16
+
+median(WT_top10, na.rm = T)-median(Mes4_top10,na.rm = T) #3.002>>0
+mean(WT_top10, na.rm = T)-mean(Mes4_top10,na.rm = T) #3.089>>0
+
+#Bottom10 in both conditions
+boxplot(WT_bottom10,Mes4_bottom10,col=c("bisque3","coral3"),names=c("Bottom 10 WT","Bottom 10 Mes4"),ylab='NSD',main="Boxplot Leak")
+
+wilcox.test(WT_bottom10,Mes4_bottom10, alternative="greater") #p-value < 2.2e-16
+
+median(WT_bottom10, na.rm = T)-median(Mes4_bottom10,na.rm = T) #2.856>>0
+mean(WT_bottom10, na.rm = T)-mean(Mes4_bottom10,na.rm = T) #3.037>>0
+
+#WT and Mes4-depleted gene groups are significantly different
+```
+
+Insulator depletion seems to have an influence on gene expression variability.
