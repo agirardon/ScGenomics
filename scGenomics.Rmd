@@ -1,6 +1,6 @@
 ---
 title: "scGenomics"
-author: "CHENEL Hugo"
+author: "CHENEL Hugo, GIRARDON Antoine"
 output: html_notebook
 editor_options: 
   chunk_output_type: console
